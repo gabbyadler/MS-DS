@@ -1,0 +1,177 @@
+---
+title: "NYPD Shooting Incident Data Report"
+author: "Gabby"
+date: "2024-06-18"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Step 0: Import Libraries
+``` {r message=FALSE}
+library(tidyverse)
+library(scales)
+```
+
+## Step 1: Import Data
+```{r import}
+data = read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+head(data)
+```
+
+## Step 2: Tidy and Transform Data
+#### * Percent of missing data in each variable
+```{r get_na_ratio_data}
+na_count = colSums(is.na(data))
+data_count = nrow(data)
+na_ratio = percent(na_count/data_count)
+```
+
+```{r print_n_ratio_data, echo = FALSE}
+na_ratio
+```
+
+#### * Remove variables we will not need
+```{r remove_unneeded_data}
+tidy_data = data %>%
+  select(-c(LOC_OF_OCCUR_DESC, LOC_CLASSFCTN_DESC, LOCATION_DESC, JURISDICTION_CODE, 
+            X_COORD_CD, Y_COORD_CD, Latitude, Longitude, Lon_Lat, PRECINCT))
+```
+
+#### * Handle missing/outliers/unknown/null data
+```{r replace_NA_data}
+tidy_data = tidy_data %>%
+  replace_na(list(PERP_AGE_GROUP = "UNKNOWN", PERP_SEX = "UNKNOWN", PERP_RACE = "UNKNOWN"))
+```
+
+```{r decide_labels_PERP_AGE_GROUP, results = 'hide'}
+#Fixes: rename "null" to "unknown"
+#       remove outliers
+tidy_data = tidy_data %>% filter(PERP_AGE_GROUP != "1020" & PERP_AGE_GROUP != "224" &
+                                   PERP_AGE_GROUP != "940")
+tidy_data$PERP_AGE_GROUP = recode(tidy_data$PERP_AGE_GROUP, "(null)" = "UNKNOWN")
+```
+
+```{r decide_labels_PERP_SEX, results = "hide"}
+#Fixes: rename "null" to "unknown"
+tidy_data$PERP_SEX = recode(tidy_data$PERP_SEX, "U" = "UNKNOWN", "(null)" = "UNKNOWN")
+```
+
+```{r decide_labels_PERP_RACE, results = "hide"}
+#Fixes: rename "null" to "unknown"
+tidy_data$PERP_RACE = recode(tidy_data$PERP_RACE, "(null)" = "UNKNOWN")
+```
+
+```{r decide_labels_VIC_AGE_GROUP, results = 'hide'}
+#Fixes: remove outliers
+tidy_data = tidy_data %>% filter(VIC_AGE_GROUP != "1022")
+```
+
+```{r decide_labels_VIC_SEX, results = 'hide'}
+#Fixes: rename "U" to "unknown"
+tidy_data$VIC_SEX = recode(tidy_data$VIC_SEX, "U" = "UNKNOWN")
+```
+
+#### * Set the appropriate variables to factors
+```{r factor_data}
+tidy_data$INCIDENT_KEY = as.character(tidy_data$INCIDENT_KEY)
+tidy_data$BORO = as.factor(tidy_data$BORO)
+tidy_data$PERP_AGE_GROUP = as.factor(tidy_data$PERP_AGE_GROUP)
+tidy_data$PERP_SEX = as.factor(tidy_data$PERP_SEX)
+tidy_data$PERP_RACE = as.factor(tidy_data$PERP_RACE)
+tidy_data$VIC_AGE_GROUP = as.factor(tidy_data$VIC_AGE_GROUP)
+tidy_data$VIC_SEX = as.factor(tidy_data$VIC_SEX)
+tidy_data$VIC_RACE = as.factor(tidy_data$VIC_RACE)
+```
+
+#### * This is what my data looks like after tidying
+```{r summary_tidy_data}
+summary(tidy_data)
+```
+
+## Step 3: Visualizations and Analysis
+#### 1. Which borough has the highest number of incidents?
+
+```{r ggplot1}
+ggplot(tidy_data, aes(x =BORO)) +
+  geom_bar() + 
+  labs(title = "Number of Incidents per Borough", x = "Boroughs", y = "Count of Incidents") +
+  theme_minimal()
+```
+
+* Results = Brooklyn has the highest number of incidents followed by the Bronx and Queens, respectively.
+
+
+
+#### 2. At what time do most incidents occur?
+
+```{r ggplot2}
+#create hour variable from time variable
+tidy_data$OCCUR_HOUR = hour(tidy_data$OCCUR_TIME)
+
+ggplot(tidy_data, aes(x = OCCUR_HOUR)) +
+  geom_point(stat = "count") +
+  geom_line(stat = "count") +
+  labs(title = "Number of Incidents Over Time in a Day", x = "Hour", y = "Count of Incidents") +
+  theme_minimal()
+``` 
+
+* Results: Incidents tend to occur most around 7 PM - 4 AM (overnight), highest at 12 AM (midnight).  
+
+## Step 4: Modeling Data
+* Model the probability of a murder case given variables: day, hour, boro, perpetrator information (age, sex, race), victim information (age, sex, race). 
+
+```{r model}
+#create day variable from date variable
+tidy_data$OCCUR_DAY = wday(mdy(tidy_data$OCCUR_DATE), label = TRUE)
+
+model = glm(STATISTICAL_MURDER_FLAG ~ OCCUR_DAY + OCCUR_HOUR + BORO + PERP_AGE_GROUP + 
+            PERP_SEX + PERP_RACE + VIC_AGE_GROUP + VIC_SEX + VIC_RACE, data = tidy_data, 
+            family = "binomial")
+
+summary(model)
+```
+
+## Step 5: Bias Identification
+
+**1. Removal of Variables**
+
+* I removed the following variables: LOC_OF_OCCUR_DESC, LOC_CLASSFCTN_DESC, LOCATION_DESC, JURISDICTION_CODE, X_COORD_CD, Y_COORD_CD, Latitude, Longitude, Lon_Lat, and PRECINCT. I did not analyze these variables before removing them, meaning they could have valuable insights that I overlooked. Mitigating this bias involves considering all variables and making the effort to look through the data before cutting it away. This also applies to variables with more missing data than others. 
+
+**2. Personal Bias**
+
+* Before analyzing the data, I had a personal bias about victims and who they would likely be. Removing my bias coming into a new data set allows me to analyze the data with a fresh gaze and without any confirmation bias. The data has demonstrated that the majority of victims are male than female, as opposed to what I would have guessed coming into the assignment. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
